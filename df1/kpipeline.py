@@ -8,7 +8,7 @@ from diffusers.pipelines.stable_diffusion import StableDiffusionPipelineOutput
 from k_diffusion.sampling import get_sigmas_karras
 
 class StableDiffusionKPipeline(StableDiffusionKDiffusionPipeline, FromCkptMixin):
-    def check_inputs(
+    def i2i_check_inputs(
         self, prompt, strength, callback_steps, negative_prompt=None, prompt_embeds=None, negative_prompt_embeds=None
     ):
         if strength < 0 or strength > 1:
@@ -139,7 +139,7 @@ class StableDiffusionKPipeline(StableDiffusionKDiffusionPipeline, FromCkptMixin)
             (nsfw) content, according to the `safety_checker`.
         """
         # 1. Check inputs. Raise error if not correct
-        self.check_inputs(prompt, strength, callback_steps, negative_prompt, prompt_embeds, negative_prompt_embeds)
+        self.i2i_check_inputs(prompt, strength, callback_steps, negative_prompt, prompt_embeds, negative_prompt_embeds)
 
         # 2. Define call parameters
         if prompt is not None and isinstance(prompt, str):
