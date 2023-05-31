@@ -5,6 +5,8 @@ from diffusers import StableDiffusionKDiffusionPipeline
 from diffusers.loaders import FromCkptMixin
 from diffusers.pipelines.stable_diffusion import StableDiffusionPipelineOutput
 
+from k_diffusion.sampling import get_sigmas_karras
+
 class StableDiffusionKPipeline(StableDiffusionKDiffusionPipeline, FromCkptMixin):
     @torch.no_grad()
     def img2img(
@@ -25,6 +27,7 @@ class StableDiffusionKPipeline(StableDiffusionKDiffusionPipeline, FromCkptMixin)
         callback: Optional[Callable[[int, int, torch.FloatTensor], None]] = None,
         callback_steps: int = 1,
         cross_attention_kwargs: Optional[Dict[str, Any]] = None,
+        use_karras_sigmas: Optional[bool] = False,
     ):
         r"""
         Function invoked when calling the pipeline for generation.
@@ -123,66 +126,55 @@ class StableDiffusionKPipeline(StableDiffusionKDiffusionPipeline, FromCkptMixin)
         )
 
         # 4. Preprocess image
-        image = self.image_processor.preprocess(image)
+#        image = self.image_processor.preprocess(image)
 
         # 5. set timesteps
         self.scheduler.set_timesteps(num_inference_steps, device=device)
         timesteps, num_inference_steps = self.get_timesteps(num_inference_steps, strength, device)
         latent_timestep = timesteps[:1].repeat(batch_size * num_images_per_prompt)
 
+        # 5. Prepare sigmas
+        if use_karras_sigmas:
+            sigma_min: float = self.k_diffusion_model.sigmas[0].item()
+            sigma_max: float = self.k_diffusion_model.sigmas[-1].item()
+            sigmas = get_sigmas_karras(n=num_inference_steps, sigma_min=sigma_min, sigma_max=sigma_max)
+            sigmas = sigmas.to(device)
+        else:
+            sigmas = self.scheduler.sigmas
+        sigmas = sigmas.to(prompt_embeds.dtype)
+
         # 6. Prepare latent variables
         latents = self.prepare_latents(
             image, latent_timestep, batch_size, num_images_per_prompt, prompt_embeds.dtype, device, generator
         )
+        latents = latents * sigmas[0]
+        self.k_diffusion_model.sigmas = self.k_diffusion_model.sigmas.to(latents.device)
+        self.k_diffusion_model.log_sigmas = self.k_diffusion_model.log_sigmas.to(latents.device)
 
-        # 7. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
-        extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
+        # 7. Define model function
+        def model_fn(x, t):
+            latent_model_input = torch.cat([x] * 2)
+            t = torch.cat([t] * 2)
 
-        # 8. Denoising loop
-        num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
-        with self.progress_bar(total=num_inference_steps) as progress_bar:
-            for i, t in enumerate(timesteps):
-                # expand the latents if we are doing classifier free guidance
-                latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
-                latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
+            noise_pred = self.k_diffusion_model(latent_model_input, t, cond=prompt_embeds)
 
-                # predict the noise residual
-                noise_pred = self.unet(
-                    latent_model_input,
-                    t,
-                    encoder_hidden_states=prompt_embeds,
-                    cross_attention_kwargs=cross_attention_kwargs,
-                    return_dict=False,
-                )[0]
+            noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+            noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
+            return noise_pred
 
-                # perform guidance
-                if do_classifier_free_guidance:
-                    noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                    noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
+        # 8. Run k-diffusion solver
+        latents = self.sampler(model_fn, latents, sigmas)
 
-                # compute the previous noisy sample x_t -> x_t-1
-                latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=False)[0]
+        # 9. Post-processing
+        image = self.decode_latents(latents)
 
-                # call the callback, if provided
-                if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
-                    progress_bar.update()
-                    if callback is not None and i % callback_steps == 0:
-                        callback(i, t, latents)
+        # 10. Run safety checker
+        image, has_nsfw_concept = self.run_safety_checker(image, device, prompt_embeds.dtype)
 
-        if not output_type == "latent":
-            image = self.vae.decode(latents / self.vae.config.scaling_factor, return_dict=False)[0]
-            image, has_nsfw_concept = self.run_safety_checker(image, device, prompt_embeds.dtype)
-        else:
-            image = latents
-            has_nsfw_concept = None
-
-        if has_nsfw_concept is None:
-            do_denormalize = [True] * image.shape[0]
-        else:
-            do_denormalize = [not has_nsfw for has_nsfw in has_nsfw_concept]
-
-        image = self.image_processor.postprocess(image, output_type=output_type, do_denormalize=do_denormalize)
-
+        # 11. Convert to PIL
+        if output_type == "pil":
+            image = self.numpy_to_pil(image)
+            
         # Offload last model to CPU
         if hasattr(self, "final_offload_hook") and self.final_offload_hook is not None:
             self.final_offload_hook.offload()
