@@ -166,7 +166,7 @@ class StableDiffusionKPipeline(StableDiffusionKDiffusionPipeline, FromCkptMixin)
         )
 
         # 4. Preprocess image
-        image = self.image_processor.preprocess(image)
+#        image = self.image_processor.preprocess(image)
 
         # 5. set timesteps
         self.scheduler.set_timesteps(num_inference_steps, device=device)
@@ -205,20 +205,16 @@ class StableDiffusionKPipeline(StableDiffusionKDiffusionPipeline, FromCkptMixin)
         # 8. Run k-diffusion solver
         latents = self.sampler(model_fn, latents, sigmas)
 
-        if not output_type == "latent":
-            image = self.vae.decode(latents / self.vae.config.scaling_factor, return_dict=False)[0]
-            image, has_nsfw_concept = self.run_safety_checker(image, device, prompt_embeds.dtype)
-        else:
-            image = latents
-            has_nsfw_concept = None
+        # 9. Post-processing
+        image = self.decode_latents(latents)
 
-        if has_nsfw_concept is None:
-            do_denormalize = [True] * image.shape[0]
-        else:
-            do_denormalize = [not has_nsfw for has_nsfw in has_nsfw_concept]
+        # 10. Run safety checker
+        image, has_nsfw_concept = self.run_safety_checker(image, device, prompt_embeds.dtype)
 
-        image = self.image_processor.postprocess(image, output_type=output_type, do_denormalize=do_denormalize)
-
+        # 11. Convert to PIL
+        if output_type == "pil":
+            image = self.numpy_to_pil(image)
+            
         # Offload last model to CPU
         if hasattr(self, "final_offload_hook") and self.final_offload_hook is not None:
             self.final_offload_hook.offload()
