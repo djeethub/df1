@@ -1,0 +1,10 @@
+torch
+torchvision
+diffusers[torch]
+transformers
+accelerate
+scipy
+safetensors
+compel
+k-diffusion
+omegaconf
