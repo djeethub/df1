@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='df1',
-    version='0.0.13',
+    version='0.0.14',
     description='df1',
     url='https://github.com/djeethub/df1.git',
     packages=['df1'],
