@@ -1,8 +1,9 @@
 from typing import Any, Callable, Dict, List, Optional, Union
 
 import torch, PIL
-from diffusers import StableDiffusionKDiffusionPipeline, StableDiffusionPipelineOutput
+from diffusers import StableDiffusionKDiffusionPipeline
 from diffusers.loaders import FromCkptMixin
+from diffusers.pipelines.stable_diffusion import StableDiffusionPipelineOutput
 
 class StableDiffusionKPipeline(StableDiffusionKDiffusionPipeline, FromCkptMixin):
     @torch.no_grad()
