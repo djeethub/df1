@@ -6,6 +6,7 @@ from diffusers.loaders import FromCkptMixin
 from diffusers.pipelines.stable_diffusion import StableDiffusionPipelineOutput
 
 from k_diffusion.sampling import get_sigmas_karras
+from diffusers.image_processor import VaeImageProcessor
 from diffusers.utils import (
     PIL_INTERPOLATION,
     deprecate,
@@ -57,7 +58,7 @@ class StableDiffusionKPipeline(StableDiffusionKDiffusionPipeline, FromCkptMixin)
                     f" {negative_prompt_embeds.shape}."
                 )
             
-    def get_timesteps(self, num_inference_steps, strength, device):
+    def i2i_get_timesteps(self, num_inference_steps, strength, device):
         # get the original timestep using init_timestep
         init_timestep = min(int(num_inference_steps * strength), num_inference_steps)
 
@@ -236,11 +237,13 @@ class StableDiffusionKPipeline(StableDiffusionKDiffusionPipeline, FromCkptMixin)
         )
 
         # 4. Preprocess image
-#        image = self.image_processor.preprocess(image)
+        if not hasattr(self, 'image_processor'):
+            self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor)
+        image = self.image_processor.preprocess(image)
 
         # 5. set timesteps
         self.scheduler.set_timesteps(num_inference_steps, device=device)
-        timesteps, num_inference_steps = self.get_timesteps(num_inference_steps, strength, device)
+        timesteps, num_inference_steps = self.i2i_get_timesteps(num_inference_steps, strength, device)
         latent_timestep = timesteps[:1].repeat(batch_size * num_images_per_prompt)
 
         # 5. Prepare sigmas
@@ -275,15 +278,19 @@ class StableDiffusionKPipeline(StableDiffusionKDiffusionPipeline, FromCkptMixin)
         # 8. Run k-diffusion solver
         latents = self.sampler(model_fn, latents, sigmas)
 
-        # 9. Post-processing
-        image = self.decode_latents(latents)
+        if not output_type == "latent":
+            image = self.vae.decode(latents / self.vae.config.scaling_factor, return_dict=False)[0]
+            image, has_nsfw_concept = self.run_safety_checker(image, device, prompt_embeds.dtype)
+        else:
+            image = latents
+            has_nsfw_concept = None
 
-        # 10. Run safety checker
-        image, has_nsfw_concept = self.run_safety_checker(image, device, prompt_embeds.dtype)
+        if has_nsfw_concept is None:
+            do_denormalize = [True] * image.shape[0]
+        else:
+            do_denormalize = [not has_nsfw for has_nsfw in has_nsfw_concept]
 
-        # 11. Convert to PIL
-        if output_type == "pil":
-            image = self.numpy_to_pil(image)
+        image = self.image_processor.postprocess(image, output_type=output_type, do_denormalize=do_denormalize)
 
         # Offload last model to CPU
         if hasattr(self, "final_offload_hook") and self.final_offload_hook is not None:
