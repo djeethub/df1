@@ -47,6 +47,15 @@ class StableDiffusionKPipeline(StableDiffusionKDiffusionPipeline, FromCkptMixin)
                     f" got: `prompt_embeds` {prompt_embeds.shape} != `negative_prompt_embeds`"
                     f" {negative_prompt_embeds.shape}."
                 )
+            
+    def get_timesteps(self, num_inference_steps, strength, device):
+        # get the original timestep using init_timestep
+        init_timestep = min(int(num_inference_steps * strength), num_inference_steps)
+
+        t_start = max(num_inference_steps - init_timestep, 0)
+        timesteps = self.scheduler.timesteps[t_start * self.scheduler.order :]
+
+        return timesteps, num_inference_steps - t_start
 
     @torch.no_grad()
     def img2img(
@@ -214,7 +223,7 @@ class StableDiffusionKPipeline(StableDiffusionKDiffusionPipeline, FromCkptMixin)
         # 11. Convert to PIL
         if output_type == "pil":
             image = self.numpy_to_pil(image)
-            
+
         # Offload last model to CPU
         if hasattr(self, "final_offload_hook") and self.final_offload_hook is not None:
             self.final_offload_hook.offload()
