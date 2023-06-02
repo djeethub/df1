@@ -2,14 +2,14 @@ from setuptools import setup, find_packages
 
 setup(
     name='df1',
-    version='0.0.17',
+    version='0.0.18',
     description='df1',
     url='https://github.com/djeethub/df1.git',
     packages=find_packages(
         where='src',
         include=['df1'],
     ),
-    package_dir={"":"src"},
+    package_dir={"": "src"},
     install_requires=[
       'torch', 'torchvision',
       'diffusers[torch]', 'transformers', 'accelerate', 'scipy', 'safetensors', 'compel', 'k-diffusion', 'omegaconf',
