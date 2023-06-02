@@ -2,10 +2,13 @@ from setuptools import setup, find_packages
 
 setup(
     name='df1',
-    version='0.0.16',
+    version='0.0.17',
     description='df1',
     url='https://github.com/djeethub/df1.git',
-    packages=find_packages(),
+    packages=find_packages(
+        where='src',
+        include=['df1'],
+    ),
     package_dir={"":"src"},
     install_requires=[
       'torch', 'torchvision',
